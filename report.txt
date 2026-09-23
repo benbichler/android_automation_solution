@@ -1,0 +1,26 @@
+Device information
+  ID: emulator-5554
+  Android version: 17
+  Model: sdk_gphone16k_arm64
+  Manufacturer: Google
+  Battery: 100%
+
+Results
+  Device is reachable: PASS
+    Command returned "hello".
+  Android version: PASS
+    Installed major version 17 is greater than or equal to 10.
+  Battery level: PASS
+    Battery is 100%, which is above 20%.
+  Application installation: PASS
+    Package path: package:/system_ext/priv-app/SettingsGoogle/SettingsGoogle.apk
+  Launch application: PASS
+    Activity manager started the launcher activity.
+
+Totals
+  Passed: 5
+  Failed: 0
+  Skipped: 0
+  All: 5
+
+Overall: PASS

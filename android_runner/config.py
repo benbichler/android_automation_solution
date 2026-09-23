@@ -1,27 +1,22 @@
 """Read config.json. Raise ConfigError with a plain message if it's bad."""
 
 import json
-import re
-from dataclasses import dataclass
 from pathlib import Path
-
-# com.example.app — at least two segments, each starting with a letter.
-PACKAGE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$")
 
 
 class ConfigError(Exception):
     pass
 
 
-@dataclass
 class Config:
-    package_name: str
-    minimum_android_version: int
-    minimum_battery: int
-    device_id: str | None = None
+    def __init__(self, package_name, minimum_android_version, minimum_battery, device_id=None):
+        self.package_name = package_name
+        self.minimum_android_version = minimum_android_version
+        self.minimum_battery = minimum_battery
+        self.device_id = device_id
 
 
-def load_config(path) -> Config:
+def load_config(path):
     path = Path(path)
     if not path.is_file():
         raise ConfigError(f"Configuration file not found: {path}")
@@ -34,13 +29,37 @@ def load_config(path) -> Config:
     if not isinstance(data, dict):
         raise ConfigError(f"Invalid configuration: {path.name} must be a JSON object")
 
-    package_name = str(data.get("package_name", "")).strip()
-    if not package_name:
+    package_name = data.get("package_name")
+    if not isinstance(package_name, str) or not package_name.strip():
         raise ConfigError("Invalid configuration: missing or invalid field 'package_name'")
-    if PACKAGE_RE.fullmatch(package_name) is None:
+    package_name = package_name.strip()
+    if "." not in package_name:
         raise ConfigError(
             "Invalid configuration: field 'package_name' must look like 'com.example.demo'"
         )
+
+    if "minimum_android_version" not in data:
+        raise ConfigError("Invalid configuration: missing field 'minimum_android_version'")
+    version = data["minimum_android_version"]
+    # JSON true/false become bools, and bool is a subclass of int.
+    if isinstance(version, bool) or not isinstance(version, (int, float)):
+        raise ConfigError("Invalid configuration: field 'minimum_android_version' must be a whole number")
+    if isinstance(version, float) and not version.is_integer():
+        raise ConfigError("Invalid configuration: field 'minimum_android_version' must be a whole number")
+    version = int(version)
+    if version < 1:
+        raise ConfigError("Invalid configuration: field 'minimum_android_version' must be at least 1")
+
+    if "minimum_battery" not in data:
+        raise ConfigError("Invalid configuration: missing field 'minimum_battery'")
+    battery = data["minimum_battery"]
+    if isinstance(battery, bool) or not isinstance(battery, (int, float)):
+        raise ConfigError("Invalid configuration: field 'minimum_battery' must be a whole number")
+    if isinstance(battery, float) and not battery.is_integer():
+        raise ConfigError("Invalid configuration: field 'minimum_battery' must be a whole number")
+    battery = int(battery)
+    if battery < 0 or battery > 100:
+        raise ConfigError("Invalid configuration: field 'minimum_battery' must be between 0 and 100")
 
     device_id = data.get("device_id")
     if device_id is not None:
@@ -48,30 +67,4 @@ def load_config(path) -> Config:
             raise ConfigError("Invalid configuration: field 'device_id' must be a non-empty string")
         device_id = device_id.strip()
 
-    return Config(
-        package_name=package_name,
-        minimum_android_version=_whole_number(data, "minimum_android_version", low=1),
-        minimum_battery=_whole_number(data, "minimum_battery", low=0, high=100),
-        device_id=device_id,
-    )
-
-
-def _whole_number(data, field, low, high=None):
-    if field not in data:
-        raise ConfigError(f"Invalid configuration: missing field '{field}'")
-
-    value = data[field]
-    # JSON true/false become bools, and bool is a subclass of int.
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ConfigError(f"Invalid configuration: field '{field}' must be a whole number")
-    if isinstance(value, float) and not value.is_integer():
-        raise ConfigError(f"Invalid configuration: field '{field}' must be a whole number")
-
-    number = int(value)
-    if number < low or (high is not None and number > high):
-        if high is None:
-            bounds = f"at least {low}"
-        else:
-            bounds = f"between {low} and {high}"
-        raise ConfigError(f"Invalid configuration: field '{field}' must be {bounds}")
-    return number
+    return Config(package_name, version, battery, device_id)
