@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+from android_runner.adb import AdbError
 from android_runner.config import Config
 from android_runner.runner import collect_device_info, run_checks
 
@@ -11,7 +12,9 @@ def config(minimum_battery=20, package_name="com.android.settings"):
     return Config(package_name, 10, minimum_battery)
 
 
-def fake_adb(version="17\n", pm=(0, "package:/data/app/settings/base.apk\n", "")):
+def fake_adb(version="17\n", pm=(0, "package:/data/app/settings/base.apk\n", ""), am=None):
+    if am is None:
+        am = (0, "Starting: Intent { pkg=com.android.settings }\n", "")
     calls = []
 
     def run(args, timeout=15):
@@ -29,7 +32,7 @@ def fake_adb(version="17\n", pm=(0, "package:/data/app/settings/base.apk\n", "")
         if "pm" in args:
             return pm
         if "am" in args:
-            return 0, "Starting: Intent { pkg=com.android.settings }\n", ""
+            return am
         raise AssertionError(args)
 
     run.calls = calls
@@ -45,6 +48,16 @@ class DeviceInfoTest(unittest.TestCase):
         self.assertEqual(info["model"], "sdk_gphone16k_arm64")
         self.assertEqual(info["manufacturer"], "Google")
         self.assertEqual(info["battery"], 100)
+
+    def test_strange_battery_output_is_none(self):
+        def run(args, timeout=15):
+            if "dumpsys" in args:
+                return 0, "  level: unknown\n", ""
+            return fake_adb()(args, timeout)
+
+        with patch("android_runner.runner.run_adb", run):
+            info = collect_device_info(SERIAL)
+        self.assertIsNone(info["battery"])
 
 
 class RunChecksTest(unittest.TestCase):
@@ -86,6 +99,33 @@ class RunChecksTest(unittest.TestCase):
         self.assertEqual(results[4]["status"], "SKIP")
         launched = any("am" in call for call in fake.calls)
         self.assertFalse(launched)
+
+    def test_starting_plus_error_is_a_fail(self):
+        output = "Starting: Intent { pkg=com.example.demo }\nError: Activity not started\n"
+        with patch("android_runner.runner.run_adb", fake_adb(am=(0, output, ""))):
+            info = collect_device_info(SERIAL)
+            launch = run_checks(SERIAL, config(), info)[4]
+        self.assertEqual(launch["status"], "FAIL")
+        self.assertIn("Error", launch["detail"])
+
+    def test_timeout_fails_one_check_and_continues(self):
+        def run(args, timeout=15):
+            if "echo" in args:
+                raise AdbError("adb timed out after 15s")
+            return fake_adb()(args, timeout)
+
+        info = {
+            "serial": SERIAL,
+            "android_version": "17",
+            "model": "sdk_gphone16k_arm64",
+            "manufacturer": "Google",
+            "battery": 100,
+        }
+        with patch("android_runner.runner.run_adb", run):
+            results = run_checks(SERIAL, config(), info)
+        self.assertEqual(results[0]["status"], "FAIL")
+        self.assertIn("timed out", results[0]["detail"])
+        self.assertEqual([item["status"] for item in results[1:]], ["PASS", "PASS", "PASS", "PASS"])
 
 
 if __name__ == "__main__":

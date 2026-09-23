@@ -1,13 +1,11 @@
-"""Pick a device, read a few facts, and run the checks."""
-
-from android_runner.adb import run_adb
+from android_runner.adb import AdbError, run_adb
 
 
 class DeviceError(Exception):
     pass
 
 
-def select_device(config):
+def select_device(config): # selects a device from the list
     code, out, err = run_adb(["devices"])
     if code != 0:
         detail = err.strip() or out.strip() or f"adb devices exited {code}"
@@ -44,7 +42,7 @@ def select_device(config):
     return ready[0]
 
 
-def collect_device_info(serial):
+def collect_device_info(serial): # running all getprops and battery dump
     code, out, err = run_adb(["-s", serial, "shell", "getprop", "ro.build.version.release"])
     android_version = out.strip() if code == 0 and out.strip() else None
 
@@ -60,7 +58,10 @@ def collect_device_info(serial):
         for line in out.splitlines():
             text = line.strip()
             if text.startswith("level:"):
-                battery = int(text.split(":", 1)[1].strip())
+                try:
+                    battery = int(text.split(":", 1)[1].strip())
+                except ValueError:
+                    battery = None
                 break
 
     return {
@@ -75,20 +76,28 @@ def collect_device_info(serial):
 def run_checks(serial, config, info):
     checks = []
 
-    code, out, err = run_adb(["-s", serial, "shell", "echo", "hello"])
-    out, err = out.strip(), err.strip()
-    if code == 0 and out == "hello":
-        checks.append({
-            "name": "Device is reachable",
-            "status": "PASS",
-            "detail": 'Command returned "hello".',
-        })
-    else:
+    try:
+        code, out, err = run_adb(["-s", serial, "shell", "echo", "hello"])
+    except AdbError as exc:
         checks.append({
             "name": "Device is reachable",
             "status": "FAIL",
-            "detail": err or out or f"exit code {code}",
+            "detail": str(exc),
         })
+    else:
+        out, err = out.strip(), err.strip()
+        if code == 0 and out == "hello":
+            checks.append({
+                "name": "Device is reachable",
+                "status": "PASS",
+                "detail": 'Command returned "hello".',
+            })
+        else:
+            checks.append({
+                "name": "Device is reachable",
+                "status": "FAIL",
+                "detail": err or out or f"exit code {code}",
+            })
 
     raw = info.get("android_version")
     if not raw:
@@ -137,41 +146,64 @@ def run_checks(serial, config, info):
             "detail": f"Battery is {level}%, and the threshold is strictly above {minimum}%.",
         })
 
-    code, out, err = run_adb(["-s", serial, "shell", "pm", "path", config.package_name])
     package_path = None
-    for line in out.splitlines():
-        if line.strip().startswith("package:"):
-            package_path = line.strip()
-            break
-    if package_path:
-        checks.append({
-            "name": "Application installation",
-            "status": "PASS",
-            "detail": f"Package path: {package_path}",
-        })
-    else:
+    install_error = False
+    try:
+        code, out, err = run_adb(["-s", serial, "shell", "pm", "path", config.package_name])
+    except AdbError as exc:
+        install_error = True
         checks.append({
             "name": "Application installation",
             "status": "FAIL",
-            "detail": f"Package {config.package_name} is not installed.",
+            "detail": str(exc),
         })
+    else:
+        for line in out.splitlines():
+            if line.strip().startswith("package:"):
+                package_path = line.strip()
+                break
+        if package_path:
+            checks.append({
+                "name": "Application installation",
+                "status": "PASS",
+                "detail": f"Package path: {package_path}",
+            })
+        else:
+            checks.append({
+                "name": "Application installation",
+                "status": "FAIL",
+                "detail": f"Package {config.package_name} is not installed.",
+            })
 
     if not package_path:
+        if install_error:
+            detail = "Install check did not finish, so launch was not attempted."
+        else:
+            detail = "Package is not installed, so launch was not attempted."
         checks.append({
             "name": "Launch application",
             "status": "SKIP",
-            "detail": "Package is not installed, so launch was not attempted.",
+            "detail": detail,
         })
         return checks
 
-    code, out, err = run_adb([
-        "-s", serial, "shell", "am", "start",
-        "-a", "android.intent.action.MAIN",
-        "-c", "android.intent.category.LAUNCHER",
-        "-p", config.package_name,
-    ])
+    try:
+        code, out, err = run_adb([
+            "-s", serial, "shell", "am", "start",
+            "-a", "android.intent.action.MAIN",
+            "-c", "android.intent.category.LAUNCHER",
+            "-p", config.package_name,
+        ])
+    except AdbError as exc:
+        checks.append({
+            "name": "Launch application",
+            "status": "FAIL",
+            "detail": str(exc),
+        })
+        return checks
+
     out, err = out.strip(), err.strip()
-    if code == 0 and "Starting:" in out:
+    if code == 0 and "Starting:" in out and "Error" not in out and "Error" not in err:
         checks.append({
             "name": "Launch application",
             "status": "PASS",
