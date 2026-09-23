@@ -67,28 +67,56 @@ Exit code `0` means the report is an overall pass. Exit code `1` means at least 
 
 ## Tests
 
+The tests use pytest. Install it inside a virtual environment. On macOS this is required, because Homebrew's Python refuses `pip install` into the system Python.
+
 ```bash
-python3 -m unittest discover -s tests -v
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
 ```
 
-The tests fake `adb`. They pass with no phone and no emulator connected.
+Then run from the project folder:
 
-## What the code does
+```bash
+pytest -v
+```
 
-`main.py` calls the steps in order.
+In a new terminal, run `source .venv/bin/activate` again first.
 
-`android_runner/config.py` reads `config.json` first. The two number fields go through one helper, `_whole_number`, that checks the field exists, is a whole number and is in range. A bad file raises `ConfigError` and adb is not contacted.
+The tests replace `adb` with a fake that returns prepared output, so they pass with no phone and no emulator connected.
 
-`android_runner/adb.py` runs one adb command and returns the exit code, normal output, and error output. A missing adb, or a command that sits longer than 15 seconds, raises `AdbError`.
+## Project structure
 
-`android_runner/runner.py` parses `adb devices` and keeps a device only when its state is `device`. It then reads the version, model, and manufacturer with `getprop`, and the battery percent from `dumpsys battery`. The five checks are reachability (`echo hello`), Android version, battery, whether the package is installed (`pm path`), and launching it (`am start`). If the package is missing, launch is `SKIP`.
+```
+main.py                 runs the steps in order and sets the exit code
+config.json             package name and thresholds
+android_runner/
+    config.py           reads and validates config.json
+    adb.py              runs one adb command with a timeout
+    runner.py           picks the device, reads its details, runs the checks
+    report.py           writes report.txt and saves logcat for failed checks
+tests/                  pytest tests, adb is faked
+logs/                   logcat dumps from failed checks (not committed)
+```
 
-`android_runner/report.py` writes `report.txt`. Overall `PASS` means nothing failed. A skip does not fail the run by itself. Each failed check tries `adb logcat -d -t 200` (the last 200 lines) and saves the dump under `logs/` as `<timestamp>_<check_name>.log`. `-d` makes logcat print and exit. If that dump fails, the original check result is kept and the report is still written. Log dumps are not committed.
+## Design choices
+
+- **All adb calls go through one function, `run_adb`.** The timeout and the "adb is missing" message live in one place, and the tests only need to fake this one function.
+- **The config is checked before adb is touched.** A typo in `config.json` is reported in the first second, not after waiting for a device.
+- **One failed check does not stop the others.** Each check is its own function. The ones that call adb run through `_safe`, which turns a timeout into a `FAIL` for that check only. Only setup problems (config, adb, device) stop the run.
+- **The launch check reads the output of `am start`, not only its exit code.** `am start` can exit with 0 and still print `Error: Activity not started`.
+- **Failed checks save the last 200 lines of logcat** (`adb logcat -d -t 200`). The full log can be thousands of lines. If saving it fails, the check result and the report are kept.
 
 ## Assumptions
 
-The Android version compared with the config is `ro.build.version.release`, the version shown in Settings, not the API level. Only one ready device is required unless `device_id` is set. The launch check trusts the `am start` result. It does not look at the screen.
+- The Android version is `ro.build.version.release` (for example `14`, as shown in Settings), not the API level.
+- One ready device is expected. With more than one, `device_id` must be set.
+- The launch check is command-level. It does not look at the screen.
 
 ## With more time
 
-Filter logcat to the app instead of saving the last 200 lines. Repeat the run on a timer. Write a JSON report next to the text file. Add a storage check with `adb shell df /data`.
+- Filter logcat to the app under test instead of saving the last 200 lines.
+- Run on every connected device, not only one.
+- Write a JSON report next to the text file.
+- Add a storage check with `adb shell df /data`.
+- Run the tests in CI (GitHub Actions) on every push.

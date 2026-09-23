@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.pytest_cache/
 .DS_Store
 
 # Failure logs can contain device output. Keep the folder, ignore the dumps.

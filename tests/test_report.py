@@ -1,75 +1,55 @@
-import tempfile
-import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from android_runner.adb import AdbError
 from android_runner.report import save_failure_log, write_report
 
-
-def info():
-    return {
-        "serial": "emulator-5554",
-        "android_version": "17",
-        "model": "sdk_gphone16k_arm64",
-        "manufacturer": "Google",
-        "battery": 100,
-    }
+INFO = {
+    "serial": "emulator-5554",
+    "android_version": "17",
+    "model": "sdk_gphone16k_arm64",
+    "manufacturer": "Google",
+    "battery": 100,
+}
 
 
-def check(name, status, detail="ok", log=None):
-    item = {"name": name, "status": status, "detail": detail}
-    if log:
-        item["log"] = log
-    return item
+def check(name, status, detail="ok"):
+    return {"name": name, "status": status, "detail": detail}
 
 
-class WriteReportTest(unittest.TestCase):
-    def test_pass_when_nothing_failed(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "report.txt"
-            results = [
-                check("Device is reachable", "PASS"),
-                check("Launch application", "SKIP", "not installed"),
-            ]
-            overall = write_report(info(), results, path)
-            text = path.read_text()
-        self.assertEqual(overall, "PASS")
-        self.assertIn("ID: emulator-5554", text)
-        self.assertIn("Passed: 1", text)
-        self.assertIn("Failed: 0", text)
-        self.assertIn("Skipped: 1", text)
-        self.assertIn("All: 2", text)
-        self.assertIn("Overall: PASS", text)
+def test_pass_when_nothing_failed(tmp_path):
+    path = tmp_path / "report.txt"
+    results = [check("Device is reachable", "PASS"), check("Launch application", "SKIP")]
 
-    def test_fail_when_one_check_failed(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "report.txt"
-            results = [
-                check("Battery level", "FAIL", "Battery is 20%, and the threshold is strictly above 20%."),
-                check("Device is reachable", "PASS"),
-            ]
-            overall = write_report(info(), results, path)
-            text = path.read_text()
-        self.assertEqual(overall, "FAIL")
-        self.assertIn("Battery level: FAIL", text)
-        self.assertIn("Overall: FAIL", text)
+    assert write_report(INFO, results, path) == "PASS"
+    text = path.read_text()
+    for line in ["ID: emulator-5554", "Passed: 1", "Failed: 0", "Skipped: 1", "All: 2", "Overall: PASS"]:
+        assert line in text
 
 
-class SaveFailureLogTest(unittest.TestCase):
-    def test_writes_logcat_output(self):
-        with tempfile.TemporaryDirectory() as directory:
-            with patch("android_runner.report.run_adb", return_value=(0, "log line\n", "")):
-                saved = save_failure_log("emulator-5554", "Battery level", directory)
-            self.assertIsNotNone(saved)
-            self.assertIn("battery_level", saved)
-            self.assertEqual(Path(saved).read_text(), "log line\n")
+def test_fail_when_one_check_failed(tmp_path):
+    path = tmp_path / "report.txt"
+    results = [check("Battery level", "FAIL"), check("Device is reachable", "PASS")]
 
-    def test_logcat_problem_does_not_raise(self):
-        with patch("android_runner.report.run_adb", side_effect=AdbError("timed out")):
-            saved = save_failure_log("emulator-5554", "Battery level")
-        self.assertIsNone(saved)
+    assert write_report(INFO, results, path) == "FAIL"
+    text = path.read_text()
+    assert "Battery level: FAIL" in text
+    assert "Overall: FAIL" in text
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_log_path_goes_into_the_report(tmp_path):
+    path = tmp_path / "report.txt"
+    item = {**check("Battery level", "FAIL"), "log": "logs/x_battery_level.log"}
+    write_report(INFO, [item], path)
+    assert "Log: logs/x_battery_level.log" in path.read_text()
+
+
+def test_writes_logcat_output(tmp_path):
+    with patch("android_runner.report.run_adb", return_value=(0, "log line\n", "")):
+        saved = save_failure_log("emulator-5554", "Battery level", tmp_path)
+    assert "battery_level" in saved
+    assert open(saved).read() == "log line\n"
+
+
+def test_logcat_problem_does_not_raise(tmp_path):
+    with patch("android_runner.report.run_adb", side_effect=AdbError("timed out")):
+        assert save_failure_log("emulator-5554", "Battery level", tmp_path) is None
