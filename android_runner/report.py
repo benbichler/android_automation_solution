@@ -1,5 +1,3 @@
-"""Write report.txt and keep a logcat dump for each failed check."""
-
 from datetime import datetime
 from pathlib import Path
 

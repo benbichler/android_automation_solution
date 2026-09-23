@@ -6,3 +6,6 @@ __pycache__/
 # Failure logs can contain device output. Keep the folder, ignore the dumps.
 logs/*
 !logs/.gitkeep
+
+# The assignment itself stays local.
+Android-Python-Automation-Assignment.pdf

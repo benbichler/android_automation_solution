@@ -51,6 +51,20 @@ That loads the config, picks one device, reads the device facts, runs the five c
 
 Exit code `0` means the report is an overall pass. Exit code `1` means at least one check failed. Exit code `2` means setup stopped the run before the checks: bad config, adb missing, or no usable device.
 
+## Failure behavior
+
+| Situation | What happens |
+| --- | --- |
+| adb is not installed | Prints that Android Platform Tools must be installed and adb added to PATH. Exit code 2. |
+| No device connected | Prints "No Android device or emulator is connected." Exit code 2. |
+| Device is unauthorized or offline | Prints the serial and the state, for example `R5CT123 is unauthorized`. Exit code 2. |
+| More than one ready device | Lists them and asks for `device_id` in config.json. Exit code 2. |
+| Bad config.json | Names the missing or invalid field. No traceback, adb is not contacted. Exit code 2. |
+| An adb command fails or times out during a check | Only that check is `FAIL`, with the error as its detail. The other checks still run. |
+| Battery level cannot be read | The battery check is `FAIL` with "Could not read the battery level." |
+| Package is not installed | Installation is `FAIL`, launch is `SKIP`. |
+| logcat fails after a failed check | The check result is kept and the report is still written, without a log path. |
+
 ## Tests
 
 ```bash
@@ -63,13 +77,13 @@ The tests fake `adb`. They pass with no phone and no emulator connected.
 
 `main.py` calls the steps in order.
 
-`android_runner/config.py` reads `config.json` first. A bad file raises `ConfigError` and adb is not contacted.
+`android_runner/config.py` reads `config.json` first. The two number fields go through one helper, `_whole_number`, that checks the field exists, is a whole number and is in range. A bad file raises `ConfigError` and adb is not contacted.
 
 `android_runner/adb.py` runs one adb command and returns the exit code, normal output, and error output. A missing adb, or a command that sits longer than 15 seconds, raises `AdbError`.
 
 `android_runner/runner.py` parses `adb devices` and keeps a device only when its state is `device`. It then reads the version, model, and manufacturer with `getprop`, and the battery percent from `dumpsys battery`. The five checks are reachability (`echo hello`), Android version, battery, whether the package is installed (`pm path`), and launching it (`am start`). If the package is missing, launch is `SKIP`.
 
-`android_runner/report.py` writes `report.txt`. Overall `PASS` means nothing failed. A skip does not fail the run by itself. Each failed check tries `adb logcat -d` and saves the dump under `logs/`. `-d` makes logcat print and exit. If that dump fails, the original check result is kept and the report is still written. Log dumps are not committed.
+`android_runner/report.py` writes `report.txt`. Overall `PASS` means nothing failed. A skip does not fail the run by itself. Each failed check tries `adb logcat -d -t 200` (the last 200 lines) and saves the dump under `logs/` as `<timestamp>_<check_name>.log`. `-d` makes logcat print and exit. If that dump fails, the original check result is kept and the report is still written. Log dumps are not committed.
 
 ## Assumptions
 
