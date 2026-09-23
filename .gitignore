@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+
+# Failure logs can contain device output. Keep the folder, ignore the dumps.
+logs/*
+!logs/.gitkeep
